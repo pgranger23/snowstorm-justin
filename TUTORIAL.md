@@ -50,6 +50,14 @@ to keep.
 Use a fresh seed for a genuinely new sample; reuse one only when you mean "the
 same sample again".
 
+The flip side is worth knowing: because the seed and the input names fully
+determine the output names, re-running a production with the same seed over the
+same inputs produces files with *identical names*, which Rucio will refuse as
+duplicates. That is the correct behaviour — the sample already exists — but if
+you deliberately want a second copy (a reprocessing under a newer dunesw, say),
+set `PASS=v2`. It is added to the output names and not to the throw, so the
+parameters stay identical while the files are distinguishable.
+
 ## 2. Decide what to vary
 
 `dials.json` is the whole parameter model. Each entry names the fcl parameter

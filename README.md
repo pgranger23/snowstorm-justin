@@ -60,10 +60,22 @@ SEED=my-2026a NJOBS=2 NUM_EVENTS=1 LIFETIME_DAYS=7 \
 
 ## Status
 
-Validated on the grid: justIN workflows 20169 (two jobs, three dials) and
-20380 (one job, four dials, via the tutorial's own path). In both, the values
-in MetaCat matched what the sampler predicted before submission, to the last
-digit, and MQL range queries selected on them correctly. `config_dumper -P` on
-a downloaded output agreed with both.
+Validated on the grid:
+
+| workflow | what it exercised |
+|---|---|
+| 20169 | two jobs, three dials, generation inside the job |
+| 20380 | four dials including the WireCell gain, via the tutorial's own path |
+| 20401 | phase 1: shared generation into a Rucio dataset |
+| 20402 | phase 2 over those files: `--mql` input, seed-based keys, jobscript fetched from this repo by tag |
+
+In every case the values recorded in MetaCat matched what the sampler predicted
+*before* submission, to the last digit, and MQL range queries selected on them
+correctly. `config_dumper -P` on a downloaded output agreed too.
+
+Workflow 20402 is the one that shows the reproducibility property: the recorded
+key is `fdhd-recomb-2026a/dune10kt_1x2x6_000002_gen` — a seed and an input file
+name, nothing else. Re-processing those inputs in any future workflow with that
+seed gives the same parameters.
 
 Not yet done: a run at production scale, and the per-event work in `perevent/`.
