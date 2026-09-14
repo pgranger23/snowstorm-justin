@@ -95,6 +95,8 @@ fi
 # --monte-carlo invents counters; --mql takes real input files. In MQL mode the
 # jobscript must not be given GEN_FCL, so that it uses the file justIN hands it
 # and derives the throw from that file's name.
+# Note the ${x[@]+"${x[@]}"} idiom below: under `set -u`, expanding an empty
+# array is an error in bash before 4.4, which the gpvms still run.
 if [ -n "$MQL" ]; then
   INPUT_ARGS=(--mql "$MQL")
   GEN_ARGS=()
@@ -104,7 +106,7 @@ else
 fi
 
 $JUSTIN_CMD simple-workflow \
-  "${INPUT_ARGS[@]}" "${GEN_ARGS[@]}" \
+  "${INPUT_ARGS[@]}" ${GEN_ARGS[@]+"${GEN_ARGS[@]}"} \
   "${JOBSCRIPT_ARGS[@]}" \
   --env FCL_DIR="$FCL_DIR" \
   --env DIALS="$DIALS_NAME" \
