@@ -1,0 +1,20 @@
+# pe_dials.fcl is a PROLOG-only file and must come first: fhicl requires
+# every PROLOG block to precede any non-prolog content.
+#include "pe_dials.fcl"
+#include "standard_g4_dune10kt_1x2x6.fcl"
+
+# Per-event SnowStorm variation: the service rethrows alpha/beta for every
+# event from a key of "<job key>/<run>/<subrun>/<event>", and IonAndScint picks
+# the values up through ISCalc::SetRecombModBox.
+services.DetectorVariation: {
+  key:    "w20169-1"
+  policy: "perEvent"
+  dials:  @local::snowstorm_recomb_dials
+}
+
+physics.analyzers.dvsummary: {
+  module_type: "DetVarSummary"
+  SimEnergyDepositLabel: "IonAndScint"
+}
+physics.ana: [ dvsummary ]
+physics.end_paths: [ stream1, ana ]

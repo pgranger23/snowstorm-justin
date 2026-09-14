@@ -1,0 +1,173 @@
+#!/bin/bash
+:<<'EOF'
+justIN jobscript: SnowStorm-style DUNE FD HD 1x2x6 production.
+
+Chain per job: g4 -> detsim -> reco1 -> reco2, where the detector-physics
+parameters (recombination ModBoxA/ModBoxB at g4, electron lifetime at detsim)
+are *thrown per job* rather than taken from a fixed grid.
+
+The throw is a pure function of (SEED, job stem), where SEED is chosen once by
+the submitter and the stem is the input file name -- or the Monte Carlo counter
+when generating from scratch. The justIN workflow ID is deliberately NOT part
+of it, so:
+  - nothing has to be bookkept at submission time;
+  - the parameter point of any output file can be re-derived from its name;
+  - re-processing the same input file in a different workflow, or re-running a
+    lost job months later, reproduces the identical parameter point.
+
+Environment variables set at workflow creation (see submit_snowstorm.sh):
+  FCL_DIR         cvmfs RCDS dir with snowstorm_params.py and any custom fcls
+  DIALS           name of the dial-definition JSON inside FCL_DIR
+  NUM_EVENTS      events per job (default 50)
+  DUNE_VERSION    dunesw version (default v10_16_00d00)
+  DUNE_QUALIFIER  (default e26:prof)
+  GEN_FCL         generator fcl; if unset, the job expects a GENIE input file
+  SAMPLE          name stem for outputs in Monte Carlo mode (default
+                  dune10kt_1x2x6); set it when running a different detector
+  SEED            REQUIRED. Production seed: any string. Two workflows with the
+                  same seed and the same inputs produce the same parameters.
+  PASS            optional tag added to output names (not to the throw), to
+                  distinguish a reprocessing from the sample it reproduces
+EOF
+
+NUM_EVENTS=${NUM_EVENTS:-50}
+DUNE_VERSION=${DUNE_VERSION:-v10_16_00d00}
+DUNE_QUALIFIER=${DUNE_QUALIFIER:-e26:prof}
+DIALS=${DIALS:-dials.json}
+SAMPLE=${SAMPLE:-dune10kt_1x2x6}
+
+G4_FCL=${G4_FCL:-standard_g4_dune10kt_1x2x6.fcl}
+DETSIM_FCL=${DETSIM_FCL:-standard_detsim_dune10kt_1x2x6.fcl}
+RECO1_FCL=${RECO1_FCL:-standard_reco1_dune10kt_1x2x6.fcl}
+RECO2_FCL=${RECO2_FCL:-standard_reco2_dune10kt_1x2x6.fcl}
+
+did_pfn_rse=`$JUSTIN_PATH/justin-get-file`
+if [ "$did_pfn_rse" = "" ] ; then
+  echo "Nothing to process - exit jobscript"
+  exit 0
+fi
+did=`echo $did_pfn_rse | cut -f1 -d' '`
+pfn=`echo $did_pfn_rse | cut -f2 -d' '`
+
+source /cvmfs/dune.opensciencegrid.org/products/dune/setup_dune.sh
+setup dunesw "$DUNE_VERSION" -q "$DUNE_QUALIFIER"
+
+if [ -n "$FCL_DIR" ]; then
+  export FHICL_FILE_PATH="${FCL_DIR}:${FHICL_FILE_PATH}"
+fi
+
+# --- the SnowStorm throw -------------------------------------------------
+# The job stem identifies this job's physics content: the input file when
+# processing pre-existing files, the Monte Carlo counter when generating.
+# Together with SEED it is the whole throw. Nothing here depends on
+# JUSTIN_WORKFLOW_ID, which is what makes a sample reproducible across
+# workflows.
+if [ -z "$SEED" ]; then
+  echo "SEED is not set - refusing to run: the parameter point would not be reproducible"
+  exit 1
+fi
+
+if [ -n "$GEN_FCL" ]; then
+  counter=$((10#$pfn))
+  STEM_SRC="${SAMPLE}_`printf '%06d' $counter`"
+else
+  infile=`basename "$pfn"`
+  STEM_SRC="${infile%.root}"
+fi
+export SEED STEM_SRC
+echo "SnowStorm seed = $SEED   stem = $STEM_SRC"
+
+SSP="python3 ${FCL_DIR}/snowstorm_params.py --seed ${SEED} --stem ${STEM_SRC} --dials ${FCL_DIR}/${DIALS}"
+$SSP --json > snowstorm_params.json || { echo "parameter throw FAILED"; exit 1; }
+echo "=== thrown parameter point:"; cat snowstorm_params.json
+
+# The dial fingerprint goes in the file name so that a file always states which
+# parameter model produced it. Without it, re-deriving values from a name stays
+# correct only until somebody edits the dial definition.
+DHASH=$($SSP --dial-hash)
+SHASH=$(python3 ${FCL_DIR}/snowstorm_params.py --seed "$SEED" --seed-hash)
+# The dial hash says which parameter model produced the file, the seed hash
+# which production -- without putting the seed itself in the name. PASS, if
+# set, distinguishes a reprocessing from the sample it reproduces; it is not
+# part of the throw.
+stem="snowstorm_${STEM_SRC}_${DHASH}_s${SHASH}${PASS:+_$PASS}"
+
+{ echo "#include \"${G4_FCL}\""
+  $SSP --stage g4
+} > local_g4.fcl
+
+{ echo "#include \"${DETSIM_FCL}\""
+  $SSP --stage detsim
+} > local_detsim.fcl
+
+echo "=== local_g4.fcl";     cat local_g4.fcl
+echo "=== local_detsim.fcl"; cat local_detsim.fcl
+
+run_stage () {
+  local label=$1 fcl=$2 out=$3 in=$4
+  echo "=== Stage $label ($fcl) starting at $(date -u)"
+  if [ -n "$in" ]; then
+    lar -c "$fcl" -n -1 -o "$out" "$in" > ${stem}_${label}.log 2>&1
+  else
+    lar -c "$fcl" -n "$NUM_EVENTS" -o "$out" > ${stem}_${label}.log 2>&1
+  fi
+  local ec=$?
+  echo "=== Stage $label exit code $ec"
+  [ $ec -ne 0 ] && tail -100 ${stem}_${label}.log
+  return $ec
+}
+
+# Input: either generate, or take the GENIE file justIN handed us.
+if [ -n "$GEN_FCL" ]; then
+  cat > local_gen.fcl <<FCLEOF
+#include "${GEN_FCL}"
+source.firstSubRun: ${counter}
+FCLEOF
+  run_stage gen local_gen.fcl ${stem}_gen.root || { echo "gen FAILED"; exit 1; }
+  G4_INPUT=${stem}_gen.root
+else
+  G4_INPUT=`basename "$pfn"`
+  # justIN stages the input file for us; fall back to an explicit copy.
+  [ -f "$G4_INPUT" ] || xrdcp "$pfn" "$G4_INPUT" || { echo "input copy FAILED"; exit 1; }
+fi
+
+jobscriptExit=1
+if run_stage g4     local_g4.fcl     ${stem}_g4.root     $G4_INPUT           && \
+   run_stage detsim local_detsim.fcl ${stem}_detsim.root ${stem}_g4.root     && \
+   run_stage reco1  $RECO1_FCL       ${stem}_reco1.root  ${stem}_detsim.root && \
+   run_stage reco2  $RECO2_FCL       ${stem}_reco2.root  ${stem}_reco1.root
+then
+  echo "Full chain succeeded"
+  echo "$pfn" > justin-processed-pfns.txt
+  jobscriptExit=0
+
+  # Sidecar metadata: justIN merges *.json next to an output file into that
+  # file's MetaCat record, so the thrown parameters become queryable rather
+  # than only recoverable with config_dumper.
+  python3 - <<PYEOF > ${stem}_reco2.root.json
+import json, os
+p = json.load(open("snowstorm_params.json"))
+md = {"snowstorm.key": p["snowstorm_key"],
+      "snowstorm.dial_hash": p["dial_hash"],
+      "snowstorm.seed": os.environ["SEED"],
+      "snowstorm.stem": os.environ["STEM_SRC"]}
+# Numeric, one key per dial, so MetaCat range queries work. Deliberately NOT
+# reusing dune_mc.electron_lifetime, which is string-typed in production with
+# inconsistent values ('10.4', '35ms', '3ms') and cannot be range-queried.
+for name, value in p["params"].items():
+    md["snowstorm." + name] = float(value)
+print(json.dumps({"metadata": md}, indent=2))
+PYEOF
+  echo "=== sidecar metadata:"; cat ${stem}_reco2.root.json
+
+  rm -f ${stem}_g4.root ${stem}_detsim.root ${stem}_reco1.root
+else
+  echo "Chain FAILED for key $SS_KEY"
+  rm -f *.root
+fi
+
+grep -h "VmPeak\|VmHWM\|TimeReport CPU" ${stem}_*.log | tail -20
+ls -lS
+tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` *.log snowstorm_params.json local_*.fcl
+
+exit $jobscriptExit

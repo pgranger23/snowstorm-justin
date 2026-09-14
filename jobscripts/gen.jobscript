@@ -1,0 +1,59 @@
+#!/bin/bash
+:<<'DOCEOF'
+justIN jobscript: phase 1 of a SnowStorm production - generate the events once.
+
+A SnowStorm sample re-simulates the *same* events at many detector-parameter
+points. Generation does not depend on the detector parameters, so doing it once
+and reusing the output is both cheaper and better: the samples then differ only
+by the detector model, which is what makes comparisons between them clean.
+
+DUNE does not keep FD HD gen-stage files catalogued with disk replicas, so this
+is how you make the input sample that snowstorm.jobscript then runs over.
+
+Environment variables:
+  GEN_FCL      generator fcl (default prodgenie_nu_dune10kt_1x2x6.fcl)
+  NUM_EVENTS   events per job (default 50)
+  SAMPLE       name stem for outputs (default dune10kt_1x2x6)
+  DUNE_VERSION, DUNE_QUALIFIER
+DOCEOF
+
+NUM_EVENTS=${NUM_EVENTS:-50}
+DUNE_VERSION=${DUNE_VERSION:-v10_16_00d00}
+DUNE_QUALIFIER=${DUNE_QUALIFIER:-e26:prof}
+GEN_FCL=${GEN_FCL:-prodgenie_nu_dune10kt_1x2x6.fcl}
+SAMPLE=${SAMPLE:-dune10kt_1x2x6}
+
+did_pfn_rse=`$JUSTIN_PATH/justin-get-file`
+if [ "$did_pfn_rse" = "" ] ; then
+  echo "Nothing to process - exit jobscript"
+  exit 0
+fi
+pfn=`echo $did_pfn_rse | cut -f2 -d' '`
+counter=$((10#$pfn))
+
+source /cvmfs/dune.opensciencegrid.org/products/dune/setup_dune.sh
+setup dunesw "$DUNE_VERSION" -q "$DUNE_QUALIFIER"
+
+# The subrun is the counter, so every job's events carry distinct IDs -- which
+# matters later: per-event bookkeeping and common random numbers both key off
+# run/subrun/event.
+stem="${SAMPLE}_`printf '%06d' $counter`_gen"
+cat > local_gen.fcl <<FCLEOF
+#include "${GEN_FCL}"
+source.firstSubRun: ${counter}
+FCLEOF
+
+echo "=== gen starting at $(date -u)"
+lar -c local_gen.fcl -n "$NUM_EVENTS" -o ${stem}.root > ${stem}.log 2>&1
+ec=$?
+echo "=== gen exit code $ec"
+[ $ec -ne 0 ] && tail -100 ${stem}.log
+
+if [ $ec -eq 0 ]; then
+  echo "$pfn" > justin-processed-pfns.txt
+fi
+
+grep -h "TimeReport CPU\|VmPeak\|VmHWM" ${stem}.log | tail -5
+ls -lS
+tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` *.log local_gen.fcl
+exit $ec

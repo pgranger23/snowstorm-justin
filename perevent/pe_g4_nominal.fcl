@@ -1,0 +1,10 @@
+#include "standard_g4_dune10kt_1x2x6.fcl"
+
+# No DetectorVariation service at all: the module must behave exactly as
+# unpatched larsim, using the LArG4Parameters values. This is the control.
+physics.analyzers.dvsummary: {
+  module_type: "DetVarSummary"
+  SimEnergyDepositLabel: "IonAndScint"
+}
+physics.ana: [ dvsummary ]
+physics.end_paths: [ stream1, ana ]

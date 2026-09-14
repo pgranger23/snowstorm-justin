@@ -1,0 +1,22 @@
+{
+  "alpha": {
+    "fcl": "services.LArG4Parameters.ModBoxA",
+    "stage": "g4", "process": "G4",
+    "dist": "gaus", "nominal": 0.93, "sigma": 0.02, "clip": [0.85, 1.01]
+  },
+  "beta": {
+    "fcl": "services.LArG4Parameters.ModBoxB",
+    "stage": "g4", "process": "G4",
+    "dist": "gaus", "nominal": 0.212, "sigma": 0.002, "clip": [0.204, 0.22]
+  },
+  "etau": {
+    "fcl": "physics.producers.tpcrawdecoder.wcls_main.structs.lifetime",
+    "stage": "detsim", "process": "detsim",
+    "dist": "loguniform", "range": [3000.0, 35000.0]
+  },
+  "elecgain": {
+    "fcl": "physics.producers.tpcrawdecoder.wcls_main.structs.elecGain",
+    "stage": "detsim", "process": "detsim",
+    "dist": "gaus", "nominal": 14.0, "sigma": 0.3, "clip": [12.5, 15.5]
+  }
+}

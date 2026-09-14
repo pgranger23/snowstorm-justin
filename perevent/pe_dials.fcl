@@ -1,0 +1,9 @@
+# The two recombination dials, in the form the DetectorVariation service wants.
+# Same numbers as dials.json; the service reproduces the Python sampler's throw
+# bit for bit, so the fcl and the JSON stay one parameter model.
+BEGIN_PROLOG
+snowstorm_recomb_dials: {
+  alpha: { dist: "gaus" nominal: 0.93  sigma: 0.02  clip: [0.85, 1.01] }
+  beta:  { dist: "gaus" nominal: 0.212 sigma: 0.002 clip: [0.204, 0.220] }
+}
+END_PROLOG
