@@ -24,11 +24,14 @@ SAMPLE=${SAMPLE:-dune10kt_1x2x6}
 DUNE_VERSION=${DUNE_VERSION:-v10_16_00d00}
 DUNE_QUALIFIER=${DUNE_QUALIFIER:-e26:prof}
 
-# Measured on HD atmospheric events: T(n) ~ 245 s + 45 s/event, so 100 events
-# is ~1.3 h. 6 h of wall gives ~4.5x headroom for the slow tail (the VD
-# production lost files to hours-long anglereco on huge showers).
-WALL_SECONDS=${WALL_SECONDS:-21600}
-RSS_MIB=${RSS_MIB:-4000}          # measured VmHWM 1.84 GB, VmPeak 3.98 GB at reco2
+# Measured ON THE GRID (canary 20441, 3 jobs x 20 events): ~80 s/event mean,
+# with a 1.85x spread across only three jobs (1313/1819/2435 s) -- local
+# measurement was 45 s/event, so grid CPUs are slower and the tail is real.
+# 100 events is therefore ~2.3 h typical, ~3.1 h at the worst rate seen.
+# 10 h of wall leaves room for a single multi-hour "monster" event, which is
+# what cost the previous VD production 12 files.
+WALL_SECONDS=${WALL_SECONDS:-36000}
+RSS_MIB=${RSS_MIB:-4000}          # grid canary peaked at 2.57 GB
 MAX_DISTANCE=${MAX_DISTANCE:-30}
 LIFETIME_DAYS=${LIFETIME_DAYS:-90}
 SCOPE=${SCOPE:-usertests}
