@@ -1,0 +1,165 @@
+#!/bin/bash
+:<<'DOCEOF'
+SnowStorm production: DUNE FD HD 1x2x6 atmospheric neutrinos, gen -> CAF.
+
+Each job generates its own events and simulates them at its own detector
+parameter point, thrown from (SEED, stem) where stem is the job's counter.
+The justIN workflow ID is NOT part of the throw, so a counter re-run in a
+later workflow reproduces the same parameter point.
+
+Events themselves are NOT reproducible: the generator uses randompolicy
+(random_NuRandomService), so seeds come from the OS. The parameter point is
+reproducible; the events are not. That is a deliberate choice -- see README.
+
+Only the CAFs are kept. Measured on HD atmospheric events, reco2 is ~13.8
+MB/event while the CAFs are ~86 kB/event, so keeping reco2 would cost ~2.8 TB
+for a 1000-file production against ~9 GB of CAFs.
+
+Environment:
+  FCL_DIR      RCDS dir with snowstorm_params.py, the dial file, caf_atmo_hd.fcl
+  DIALS        dial file name inside FCL_DIR
+  SEED         REQUIRED, production seed
+  NUM_EVENTS   events per job (default 100)
+  OFFSET       added to the justIN counter (default 0). Use it to keep a
+               canary and a production run from colliding: they both start
+               their counters at 1, which would otherwise give duplicate file
+               names AND duplicate subrun numbers (the previous VD production
+               lost its canary to exactly that subrun collision).
+  SAMPLE       name stem (default dune10kt_1x2x6)
+  KEEP_RECO2   if non-empty, also keep the reco2 file (canary only)
+  DUNE_VERSION, DUNE_QUALIFIER
+DOCEOF
+
+NUM_EVENTS=${NUM_EVENTS:-100}
+DUNE_VERSION=${DUNE_VERSION:-v10_16_00d00}
+DUNE_QUALIFIER=${DUNE_QUALIFIER:-e26:prof}
+DIALS=${DIALS:-recomb_lifetime_v1.json}
+SAMPLE=${SAMPLE:-dune10kt_1x2x6}
+OFFSET=${OFFSET:-0}
+
+# All stages run at the release-default geometry (v6). Do NOT substitute the
+# _geov5 variants of reco2/cafmaker: they force v5 and abort the job with
+# "Geometry used for run ... is incompatible with the one configured".
+GEN_FCL=${GEN_FCL:-prodgenie_atmnu_max_weighted_randompolicy_dune10kt_1x2x6.fcl}
+G4_FCL=${G4_FCL:-standard_g4_dune10kt_1x2x6.fcl}
+DETSIM_FCL=${DETSIM_FCL:-standard_detsim_dune10kt_1x2x6.fcl}
+RECO1_FCL=${RECO1_FCL:-standard_reco1_dune10kt_1x2x6.fcl}
+RECO2_FCL=${RECO2_FCL:-standard_reco2_atmos_dune10kt_1x2x6.fcl}
+CAF_FCL=${CAF_FCL:-caf_atmo_hd.fcl}
+
+if [ -z "$SEED" ]; then
+  echo "SEED is not set - refusing to run: the parameter point would not be reproducible"
+  exit 1
+fi
+
+did_pfn_rse=`$JUSTIN_PATH/justin-get-file`
+if [ "$did_pfn_rse" = "" ] ; then
+  echo "Nothing to process - exit jobscript"
+  exit 0
+fi
+pfn=`echo $did_pfn_rse | cut -f2 -d' '`
+counter=$(( 10#$pfn + OFFSET ))
+
+source /cvmfs/dune.opensciencegrid.org/products/dune/setup_dune.sh
+setup dunesw "$DUNE_VERSION" -q "$DUNE_QUALIFIER"
+export FHICL_FILE_PATH="${FCL_DIR}:${FHICL_FILE_PATH}"
+
+# --- the throw -----------------------------------------------------------
+STEM_SRC="${SAMPLE}_`printf '%06d' $counter`"
+export SEED STEM_SRC
+echo "SnowStorm seed = $SEED   stem = $STEM_SRC"
+
+SSP="python3 ${FCL_DIR}/snowstorm_params.py --seed ${SEED} --stem ${STEM_SRC} --dials ${FCL_DIR}/${DIALS}"
+$SSP --json > snowstorm_params.json || { echo "parameter throw FAILED"; exit 1; }
+echo "=== thrown parameter point:"; cat snowstorm_params.json
+
+DHASH=$($SSP --dial-hash)
+SHASH=$(python3 ${FCL_DIR}/snowstorm_params.py --seed "$SEED" --seed-hash)
+stem="snowstorm_${STEM_SRC}_${DHASH}_s${SHASH}"
+
+{ echo "#include \"${G4_FCL}\""
+  $SSP --stage g4
+} > local_g4.fcl
+
+{ echo "#include \"${DETSIM_FCL}\""
+  $SSP --stage detsim
+} > local_detsim.fcl
+
+# firstSubRun = counter so every job's events carry distinct (run, subrun, event)
+{ echo "#include \"${GEN_FCL}\""
+  echo "source.firstSubRun: ${counter}"
+} > local_gen.fcl
+
+echo "=== local_g4.fcl";     cat local_g4.fcl
+echo "=== local_detsim.fcl"; cat local_detsim.fcl
+
+run_stage () {
+  local label=$1 fcl=$2 out=$3 in=$4
+  echo "=== Stage $label ($fcl) starting at $(date -u)"
+  local t0=$(date +%s)
+  if [ -n "$in" ]; then
+    lar -c "$fcl" -n -1 -o "$out" "$in" > ${stem}_${label}.log 2>&1
+  else
+    lar -c "$fcl" -n "$NUM_EVENTS" -o "$out" > ${stem}_${label}.log 2>&1
+  fi
+  local ec=$?
+  echo "=== Stage $label exit code $ec after $(( $(date +%s)-t0 ))s"
+  [ $ec -ne 0 ] && tail -100 ${stem}_${label}.log
+  return $ec
+}
+
+jobscriptExit=1
+if run_stage gen    local_gen.fcl    ${stem}_gen.root                        && \
+   run_stage g4     local_g4.fcl     ${stem}_g4.root     ${stem}_gen.root    && \
+   run_stage detsim local_detsim.fcl ${stem}_detsim.root ${stem}_g4.root     && \
+   run_stage reco1  $RECO1_FCL       ${stem}_reco1.root  ${stem}_detsim.root && \
+   run_stage reco2  $RECO2_FCL       ${stem}_reco2.root  ${stem}_reco1.root
+then
+  # CAFMaker is an analyzer: it writes caf.root via TFileService (plus
+  # flatcaf.root) rather than taking -o, so the outputs are renamed afterwards.
+  echo "=== Stage caf ($CAF_FCL) starting at $(date -u)"
+  t0=$(date +%s)
+  lar -c "$CAF_FCL" -n -1 ${stem}_reco2.root > ${stem}_caf.log 2>&1
+  cafExit=$?
+  echo "=== Stage caf exit code $cafExit after $(( $(date +%s)-t0 ))s"
+
+  if [ $cafExit -eq 0 ] && [ -s caf.root ] && [ -s flatcaf.root ]; then
+    mv caf.root     ${stem}_caf.root
+    mv flatcaf.root ${stem}_flatcaf.root
+    echo "$pfn" > justin-processed-pfns.txt
+    jobscriptExit=0
+
+    # Sidecar metadata: justIN merges <output>.json into that file's MetaCat
+    # record, but only for Rucio-managed destinations.
+    for tgt in ${stem}_caf.root ${stem}_flatcaf.root; do
+      python3 - <<PYEOF > ${tgt}.json
+import json, os
+p = json.load(open("snowstorm_params.json"))
+md = {"snowstorm.key": p["snowstorm_key"],
+      "snowstorm.dial_hash": p["dial_hash"],
+      "snowstorm.seed": os.environ["SEED"],
+      "snowstorm.stem": os.environ["STEM_SRC"]}
+for name, value in p["params"].items():
+    md["snowstorm." + name] = float(value)
+print(json.dumps({"metadata": md}, indent=2))
+PYEOF
+    done
+    echo "=== sidecar metadata:"; cat ${stem}_caf.root.json
+  else
+    echo "CAF FAILED for $stem"
+    tail -60 ${stem}_caf.log
+    rm -f caf.root flatcaf.root
+  fi
+else
+  echo "Chain FAILED for $stem"
+fi
+
+rm -f ${stem}_gen.root ${stem}_g4.root ${stem}_detsim.root ${stem}_reco1.root
+[ -z "$KEEP_RECO2" ] && rm -f ${stem}_reco2.root
+[ $jobscriptExit -ne 0 ] && rm -f ${stem}_caf.root ${stem}_flatcaf.root *.json
+
+grep -h "TimeReport CPU\|VmHWM" ${stem}_*.log | tail -20
+ls -lS
+tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` *.log snowstorm_params.json local_*.fcl
+
+exit $jobscriptExit

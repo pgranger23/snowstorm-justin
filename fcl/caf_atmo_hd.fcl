@@ -1,0 +1,8 @@
+#include "standard_cafmaker_dune10kt_1x2x6.fcl"
+
+# Atmospheric reco2 files carry the atmospheric CVN products. Without this the
+# CAFMaker looks for the beam-style ones and SEGFAULTS on the first event
+# (verified: plain standard_cafmaker_dune10kt_1x2x6.fcl dies immediately after
+# printing "Assuming the FD HD detector"; with this line 10/10 events pass and
+# the output matches cafmaker_atmos_..._runreco-nuenergy-nuangular byte for byte).
+physics.analyzers.cafmaker.IsAtmoCVN: true
