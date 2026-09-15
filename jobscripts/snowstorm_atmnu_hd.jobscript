@@ -156,10 +156,18 @@ fi
 
 rm -f ${stem}_gen.root ${stem}_g4.root ${stem}_detsim.root ${stem}_reco1.root
 [ -z "$KEEP_RECO2" ] && rm -f ${stem}_reco2.root
-[ $jobscriptExit -ne 0 ] && rm -f ${stem}_caf.root ${stem}_flatcaf.root *.json
+# On failure remove the outputs and their sidecars, but NOT
+# snowstorm_params.json: it records the parameter point and is wanted in the
+# log tarball precisely when the job failed. Globbing *.json here also made the
+# tar below fail, destroying the diagnostics for every failed job.
+[ $jobscriptExit -ne 0 ] && rm -f ${stem}_caf.root ${stem}_flatcaf.root ${stem}_*.root.json
 
 grep -h "TimeReport CPU\|VmHWM" ${stem}_*.log | tail -20
 ls -lS
-tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` *.log snowstorm_params.json local_*.fcl
+# --ignore-failed-read so a missing file cannot abort the tarball: the logs are
+# the only diagnostic that survives a failed job.
+tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` --ignore-failed-read \
+    *.log snowstorm_params.json local_*.fcl 2>/dev/null || \
+  tar zcf `echo "$JUSTIN_JOBSUB_ID.logs.tgz" | sed 's/@/_/g'` *.log
 
 exit $jobscriptExit
