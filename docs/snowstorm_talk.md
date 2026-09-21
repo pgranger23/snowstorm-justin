@@ -81,6 +81,45 @@ that file's thrown parameter **is** the response curve. No shifted samples, no r
 
 ---
 
+# Bolting it onto a chain you already run
+
+The sampler emits **fcl override lines** — integration is three lines, not a framework.
+
+```bash
+SSP="python3 snowstorm_params.py --seed $SEED --stem $stem --dials $DIALS"
+
+{ echo '#include "standard_g4_dune10kt_1x2x6.fcl"'   # your own fcl, unchanged
+  $SSP --stage g4                                     # the throw, as overrides
+} > local_g4.fcl
+
+lar -c local_g4.fcl -o out.root in.root               # run lar exactly as before
+```
+
+<div class="small">
+
+`$SSP --stage g4` prints exactly this and nothing else:
+```
+# SnowStorm overrides, stage=g4, key=demo-2026/dune10kt_1x2x6_000101
+services.LArG4Parameters.ModBoxA: 0.9089229805292603
+services.LArG4Parameters.ModBoxB: 0.21092083229803535
+```
+</div>
+
+**Adding a dial is a JSON block** — the sampler knows an fcl path, an art stage and a prior,
+nothing else, so *any* fcl parameter at *any* stage can be varied:
+
+```json
+"elecgain": { "fcl": "...wcls_main.structs.elecGain", "stage": "detsim",
+              "dist": "gaus", "nominal": 14.0, "sigma": 0.3, "clip": [12.5, 15.5] }
+```
+
+<span class="small">
+**github.com/pgranger23/snowstorm-justin** · `examples/minimal.jobscript` is a complete runnable
+chain · `TUTORIAL.md` walks a production end to end · priors: `gaus`, `uniform`, `loguniform`
+</span>
+
+---
+
 # Production: what it cost, what it delivered
 
 Cost model **measured, not estimated**: `T(n) ≈ 245 s + 45 s × n` locally, ~80 s/event on the grid
@@ -196,7 +235,7 @@ Closure test: calibrate on half the sample, recover the throw on the other half 
 5. **Priors need signing off** by the systematics group — the current ones are reverse-engineered
    from DetSuM grid spacing.
 
-<span class="small">Code, dial sets, jobscripts and these figures: `snowstorm-justin` repo · `docs/ATMNU_HD_PRODUCTION.md`</span>
+<span class="small">**github.com/pgranger23/snowstorm-justin** — code, dial registry, jobscripts, tutorial and every figure in this talk · `docs/ATMNU_HD_PRODUCTION.md`</span>
 
 ---
 

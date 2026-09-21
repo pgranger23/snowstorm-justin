@@ -1,0 +1,67 @@
+#!/bin/bash
+:<<'DOC'
+The smallest thing that makes an existing art chain a SnowStorm production.
+
+Nothing here is specific to atmospherics, to HD, or even to this repository's
+own chain: the sampler emits fcl override lines, so ANY fcl parameter at ANY
+art stage can be a dial. Point DIALS at a different file and the same three
+lines vary a different part of the detector.
+
+Run it under justIN with:
+
+  justin simple-workflow --monte-carlo 5 \
+    --jobscript examples/minimal.jobscript \
+    --env FCL_DIR="$(justin-cvmfs-upload cfg.tar)" \
+    --env SEED=my-first-snowstorm \
+    --env DIALS=recomb_lifetime_v1.json \
+    --output-pattern '*_reco.root:my-snowstorm-test'
+
+where cfg.tar contains snowstorm_params.py and the dial file.
+DOC
+
+set -u
+NUM_EVENTS=${NUM_EVENTS:-5}
+DIALS=${DIALS:-recomb_lifetime_v1.json}
+: "${SEED:?SEED must be set -- without it the throw is not reproducible}"
+
+pfn=$($JUSTIN_PATH/justin-get-file)
+[ -z "$pfn" ] && { echo "no work for this job"; exit 0; }
+stem="demo_$(printf '%06d' "$((10#$pfn))")"
+
+source /cvmfs/dune.opensciencegrid.org/products/dune/setup_dune.sh
+setup dunesw v10_16_00d00 -q e26:prof
+export FHICL_FILE_PATH="${FCL_DIR}:${FHICL_FILE_PATH}"
+
+# ---------------------------------------------------------------- the throw
+# One call defines this job's universe. The parameter point is a pure function
+# of (SEED, stem), so re-running the same counter reproduces it exactly.
+SSP="python3 ${FCL_DIR}/snowstorm_params.py --seed ${SEED} --stem ${stem} \
+     --dials ${FCL_DIR}/${DIALS}"
+
+$SSP --json          # so the thrown values land in the job log
+
+# ------------------------------------------------- bolt it onto your own fcl
+# `--stage X` prints the fcl override lines for the dials declared at stage X.
+# Prepending an #include of your normal fcl is the whole integration.
+{ echo '#include "standard_g4_dune10kt_1x2x6.fcl"'
+  $SSP --stage g4
+} > local_g4.fcl
+
+{ echo '#include "standard_detsim_dune10kt_1x2x6.fcl"'
+  $SSP --stage detsim
+} > local_detsim.fcl
+
+# --------------------------------------------------------------- run as usual
+lar -c prodgenie_atmnu_max_weighted_randompolicy_dune10kt_1x2x6.fcl \
+    -n "$NUM_EVENTS" -o ${stem}_gen.root    || exit 1
+lar -c local_g4.fcl     -o ${stem}_g4.root     ${stem}_gen.root || exit 1
+lar -c local_detsim.fcl -o ${stem}_reco.root   ${stem}_g4.root  || exit 1
+
+# Name the output after the parameter point so the throw survives in the
+# filename alone -- no database lookup needed at analysis time.
+dhash=$($SSP --dial-hash)
+shash=$(python3 ${FCL_DIR}/snowstorm_params.py --seed "$SEED" --seed-hash)
+mv ${stem}_reco.root snowstorm_${stem}_${dhash}_s${shash}_reco.root
+
+rm -f ${stem}_gen.root ${stem}_g4.root
+echo "$pfn" > justin-processed-pfns.txt
