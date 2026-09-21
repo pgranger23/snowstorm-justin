@@ -87,3 +87,13 @@ the dial hash:
 - throwing **wide uniform** instead of Gaussian would let the sample be
   importance-reweighted to revised priors later without regenerating. For a
   1300 core-hour investment that is probably the better trade.
+
+## Talk material
+
+- `snowstorm_talk.md` — Marp source (render with `npx @marp-team/marp-cli`)
+- `snowstorm_deck.pdf` — 15 pages, 16:9, rendered from the HTML deck
+- `render.py` — WeasyPrint render step. Must run inside an EL9 container
+  (`fnal-wn-el9`): SL7's Pango is too old for WeasyPrint, and `node` will not
+  start at all against glibc 2.17, so Marp cannot run on the gpvm.
+  The `encoding="utf-8"` argument is not optional — without it WeasyPrint
+  assumes latin-1 and every Greek letter in the deck is mangled.
