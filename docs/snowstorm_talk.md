@@ -95,16 +95,6 @@ SSP="python3 snowstorm_params.py --seed $SEED --stem $stem --dials $DIALS"
 lar -c local_g4.fcl -o out.root in.root               # run lar exactly as before
 ```
 
-<div class="small">
-
-`$SSP --stage g4` prints exactly this and nothing else:
-```
-# SnowStorm overrides, stage=g4, key=demo-2026/dune10kt_1x2x6_000101
-services.LArG4Parameters.ModBoxA: 0.9089229805292603
-services.LArG4Parameters.ModBoxB: 0.21092083229803535
-```
-</div>
-
 **Adding a dial is a JSON block** — the sampler knows an fcl path, an art stage and a prior,
 nothing else, so *any* fcl parameter at *any* stage can be varied:
 
@@ -113,9 +103,20 @@ nothing else, so *any* fcl parameter at *any* stage can be varied:
               "dist": "gaus", "nominal": 14.0, "sigma": 0.3, "clip": [12.5, 15.5] }
 ```
 
+**Run it without cloning anything** — justIN fetches the jobscript from GitHub itself:
+
+```bash
+justin show-jobscript --jobscript-git \
+  pgranger23/snowstorm-justin/examples/minimal.jobscript:v0.2.0   # inspect it
+
+justin simple-workflow --monte-carlo 5 --jobscript-git \
+  pgranger23/snowstorm-justin/examples/minimal.jobscript:v0.2.0 \
+  --env SEED=my-first-snowstorm                                   # then run 5 universes
+```
+
 <span class="small">
-**github.com/pgranger23/snowstorm-justin** · `examples/minimal.jobscript` is a complete runnable
-chain · `TUTORIAL.md` walks a production end to end · priors: `gaus`, `uniform`, `loguniform`
+**github.com/pgranger23/snowstorm-justin** · reference a **tag**, never a branch — a branch moves,
+and the same workflow would then run different code · `TUTORIAL.md` walks a production end to end
 </span>
 
 ---
